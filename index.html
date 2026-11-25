@@ -645,10 +645,16 @@ function fill(ul){
   ul.innerHTML = LAZY.get(k).map(rowHtml).join(''); ul.style.minHeight = ''; ul.removeAttribute('data-lazy');
   LAZY.delete(k); filled.add(k); if (io) io.unobserve(ul);
 }
-function rowsHtml(k, its, now){
-  if (now || !io || filled.has(k)){ filled.add(k); return '<ul class="rows">' + its.map(rowHtml).join('') + '</ul>'; }
-  LAZY.set(k, its);
-  return '<ul class="rows" data-lazy="' + esc(k) + '" style="min-height:' + its.length * (pref('ex', 'on') === 'on' ? 110 : 56) + 'px"></ul>';
+// 100語ずつのかたまりに分ける（品詞の見出しでは1つの見出しに1,000語以上入るため）。now = 最初のかたまりはすぐ描く。
+function rowsHtml(key, all, now){
+  let h = '';
+  for (let i = 0; i < all.length; i += 100){
+    const k = key + '#' + i, its = all.slice(i, i + 100);
+    if ((now && !i) || !io || filled.has(k)){ filled.add(k); h += '<ul class="rows">' + its.map(rowHtml).join('') + '</ul>'; continue; }
+    LAZY.set(k, its);
+    h += '<ul class="rows" data-lazy="' + esc(k) + '" style="min-height:' + its.length * (pref('ex', 'on') === 'on' ? 110 : 56) + 'px"></ul>';
+  }
+  return h;
 }
 // まだ描いていないかたまりの中にあるカードを、先に描いておく
 function fillFor(id){ for (const [k, its] of [...LAZY]) if (its.some(it => it.id === id)){ const u = [...document.querySelectorAll('ul[data-lazy]')].find(x => x.dataset.lazy === k); if (u) fill(u); } }
@@ -702,9 +708,7 @@ function render(){
   } else if (order){
     const pos = new Map(order.map((id, i) => [id, i]));
     const sorted = vis.slice().sort((a, b) => (pos.get(a.id) ?? 1e9) - (pos.get(b.id) ?? 1e9));
-    html = '<div class="flat">';
-    for (let i = 0; i < sorted.length; i += 100) html += rowsHtml('#' + i, sorted.slice(i, i + 100), !i);
-    html += '</div>';
+    html = '<div class="flat">' + rowsHtml('', sorted, true) + '</div>';
   } else {
     // 見出しが品詞のときは、品詞が2つある語は両方の見出しに出る
     const heads = byPos ? Object.keys(POS_NAME).map(c => POS_NAME[c]).concat(NO_POS) : names;
