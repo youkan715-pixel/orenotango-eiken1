@@ -97,7 +97,7 @@ details.group>summary .cnt{font-weight:400;color:var(--sub);font-size:13px;font-
 ul.rows{list-style:none;margin:0;padding:0}
 .flat{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
 li.row{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr) 44px 36px;align-items:stretch;border-top:1px solid var(--line)}
-.flat li.row:first-child{border-top:0}
+.flat ul.rows:first-child li.row:first-child{border-top:0}
 li.row.learned .en{color:var(--sub)}
 .en{padding:10px 8px 10px 14px;font-weight:600;overflow-wrap:anywhere}
 .en small{display:block;font-weight:400;color:var(--sub);font-size:12px}
@@ -636,6 +636,22 @@ function rowHtml(it){
     '<label class="chk"><input type="checkbox" aria-label="覚えた"' + (state.learned[it.id] ? ' checked' : '') + '></label>' +
     '<button type="button" class="edit" aria-label="編集">⋯</button>' + exHtml + '</li>';
 }
+// 一覧は、画面の近くにある分だけ描く（3,000語を一度に描くと、切り替えのたびに数秒かかるため）。
+// まだ描いていないかたまりは LAZY に置き、近づいたら fill で中身を入れる。
+const LAZY = new Map(), filled = new Set(); let lazySig = '';
+const io = 'IntersectionObserver' in window ? new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) fill(e.target); }), {rootMargin: '1500px'}) : null;
+function fill(ul){
+  const k = ul.dataset.lazy; if (!LAZY.has(k)) return;
+  ul.innerHTML = LAZY.get(k).map(rowHtml).join(''); ul.style.minHeight = ''; ul.removeAttribute('data-lazy');
+  LAZY.delete(k); filled.add(k); if (io) io.unobserve(ul);
+}
+function rowsHtml(k, its, now){
+  if (now || !io || filled.has(k)){ filled.add(k); return '<ul class="rows">' + its.map(rowHtml).join('') + '</ul>'; }
+  LAZY.set(k, its);
+  return '<ul class="rows" data-lazy="' + esc(k) + '" style="min-height:' + its.length * (pref('ex', 'on') === 'on' ? 110 : 56) + 'px"></ul>';
+}
+// まだ描いていないかたまりの中にあるカードを、先に描いておく
+function fillFor(id){ for (const [k, its] of [...LAZY]) if (its.some(it => it.id === id)){ const u = [...document.querySelectorAll('ul[data-lazy]')].find(x => x.dataset.lazy === k); if (u) fill(u); } }
 function render(){
   document.documentElement.classList.toggle('reading', page === 'reading');
   if (page === 'reading'){
@@ -676,13 +692,19 @@ function render(){
   $('foldBtn').setAttribute('aria-expanded', !folded);
   $('markBtn').hidden = !all.some(it => it.id === (state.marks || {})[page]);
 
-  let html = '';
+  // 絞り込みや並びが変わったら、描いた範囲の記録を捨てる（同じ並びの描き直しでは位置がずれないよう残す）
+  const sig = [page, $('q').value, $('groupSel').value, $('typeSel').value, $('posSel').value, $('tagSel').value, onlyTodo, byPos, order ? order.slice(0, 3).join() : ''].join('|');
+  if (sig !== lazySig){ filled.clear(); lazySig = sig; }
+  LAZY.clear();
+  let html = '', first = true;
   if (!vis.length){
     html = '<p class="empty">' + (all.length ? '条件に合うものがありません。' : 'まだ何もありません。下の「＋ 追加」から入れてください。') + '</p>';
   } else if (order){
     const pos = new Map(order.map((id, i) => [id, i]));
     const sorted = vis.slice().sort((a, b) => (pos.get(a.id) ?? 1e9) - (pos.get(b.id) ?? 1e9));
-    html = '<div class="flat"><ul class="rows">' + sorted.map(rowHtml).join('') + '</ul></div>';
+    html = '<div class="flat">';
+    for (let i = 0; i < sorted.length; i += 100) html += rowsHtml('#' + i, sorted.slice(i, i + 100), !i);
+    html += '</div>';
   } else {
     // 見出しが品詞のときは、品詞が2つある語は両方の見出しに出る
     const heads = byPos ? Object.keys(POS_NAME).map(c => POS_NAME[c]).concat(NO_POS) : names;
@@ -694,11 +716,13 @@ function render(){
       const d = total.filter(it => state.learned[it.id]).length;
       html += '<details class="group" data-g="' + esc(n) + '"' + (collapsed.has(page + '/' + n) ? '' : ' open') + '>' +
         '<summary><span class="gname">' + esc(n) + '</span><span class="cnt">' + d + ' / ' + total.length + '</span></summary>' +
-        '<ul class="rows">' + inG.map(rowHtml).join('') + '</ul></details>';
+        rowsHtml(n, inG, first) + '</details>';
+      first = false;
     }
   }
   if (page === 'freq') html += '<p class="note">語の一覧：Octanove Vocabulary Profile C1/C2 v1.0（Octanove Labs）CC BY-SA 4.0 をもとに、wordfreq（Robyn Speer, 2022。元データは Google Books Ngrams・SUBTLEX・OpenSubtitles など）CC BY-SA 4.0 の頻度で並べ、語を補いました。易しい語を除くのに The CEFR-J Wordlist Version 1.5（東京外国語大学 投野由紀夫研究室）を使っています。この語の一覧も CC BY-SA 4.0 です。和訳・例文・分野はこのアプリで付けたものです。発音記号は CMUdict によります。</p>';
   $('list').innerHTML = html;
+  if (io){ io.disconnect(); $('list').querySelectorAll('ul[data-lazy]').forEach(u => io.observe(u)); }
 }
 
 /* ---------- 操作 ---------- */
@@ -782,8 +806,17 @@ $('list').addEventListener('click', e => {
 $('list').addEventListener('change', e => {
   if (e.target.type !== 'checkbox') return;
   const id = e.target.closest('li.row').dataset.id;
-  if (e.target.checked) state.learned[id] = 1; else delete state.learned[id];
-  save(); render();
+  const on = e.target.checked;
+  if (on) state.learned[id] = 1; else delete state.learned[id];
+  save();
+  if (groupByPos()){ render(); return; } // 品詞の見出しでは同じ語が2か所に出るので、全部描き直す
+  // 全部を描き直さず、その行と数字だけ直す
+  const row = e.target.closest('li.row'), c = row.closest('details.group') && row.closest('details.group').querySelector('.cnt');
+  row.classList.toggle('learned', on);
+  if (c){ const [d, t] = c.textContent.split(' / '); c.textContent = (+d + (on ? 1 : -1)) + ' / ' + t; }
+  if (onlyTodo && on) row.remove();
+  const all = itemsOf(page);
+  $('progress').textContent = '覚えた ' + all.filter(it => state.learned[it.id]).length + ' / ' + all.length + '　表示中 ' + visible(all).length + ' 件';
 });
 $('list').addEventListener('toggle', e => {
   const d = e.target; if (!d.matches || !d.matches('details.group')) return;
@@ -902,7 +935,7 @@ $('vClose').addEventListener('click', () => $('voiceDlg').close());
 $('foldBtn').addEventListener('click', () => { setPref('fold', pref('fold', 'off') === 'on' ? 'off' : 'on'); render(); });
 $('markBtn').addEventListener('click', () => {
   const id = (state.marks || {})[page]; if (!id) return;
-  const find = () => [...document.querySelectorAll('li.row')].find(l => l.dataset.id === id);
+  const find = () => { fillFor(id); return [...document.querySelectorAll('li.row')].find(l => l.dataset.id === id); };
   let row = find();
   if (!row){
     // 絞り込みで隠れているときは、絞り込みを外して探す
@@ -913,6 +946,7 @@ $('markBtn').addEventListener('click', () => {
   const g = row.closest('details.group');
   if (g && !g.open){ g.open = true; collapsed.delete(page + '/' + g.dataset.g); }
   row.scrollIntoView({block: 'center'});
+  setTimeout(() => row.scrollIntoView({block: 'center'}), 200); // 周りが描かれて位置がずれた分を直す
   row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
 });
 

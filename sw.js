@@ -1,5 +1,5 @@
 // オフライン対応。まず保存済みを返し、裏で新しい版を取りに行く。
-const CACHE = 'eiken1-v3';
+const CACHE = 'eiken1-v4';
 const FILES = ['./', 'index.html', 'data.js', 'examples.js', 'phrasal.js', 'freq.js', 'pos.js', 'blank.js', 'passages.js', 'dict.txt', 'ipa.txt', 'manifest.json', 'icon.svg', 'icon.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
